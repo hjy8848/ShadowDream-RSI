@@ -4,8 +4,8 @@ import random
 from hashlib import sha256
 from pathlib import Path
 
-from experiment_rsi.evaluation import direct_action_messages
-from experiment_rsi.solver_sft import collect_solver_sft_examples
+from .alfworld import AlfworldEpisode
+from .environment import direct_action_messages, goal_reached, replace_native_objective
 
 
 def behavior_examples(episodes):
@@ -55,9 +55,33 @@ def write_examples(path, examples):
 
 
 def witness_examples(config, tasks):
-    examples = collect_solver_sft_examples(config, tasks)
-    for item in examples:
-        item['source_kind'] = 'witness'
+    examples = []
+    step_budget = config['run']['max_steps']
+    for task in tasks:
+        history = []
+        with AlfworldEpisode(config['alfworld']['config_path'],
+                             game_file=task.task_game_file, split=task.source_split) as env:
+            view = env.reset()
+            if goal_reached(task.goal_atoms, view['facts']):
+                raise ValueError(f'SFT task goal is already satisfied at reset: {task.task_id}')
+            for step_index, action in enumerate(task.witness_actions):
+                if step_index >= step_budget:
+                    raise ValueError(f'planner trajectory exceeds the step budget: {task.task_id}')
+                if action not in view['admissible_commands']:
+                    raise ValueError(f'witness action is not admissible: {task.task_id} / {action!r}')
+                observation = replace_native_objective(view['observation'], task.instruction)
+                examples.append({'task_id': task.task_id, 'step': step_index,
+                    'messages': direct_action_messages(task.instruction, observation, history,
+                        view['admissible_commands'], step_budget - step_index),
+                    'target_action': action, 'source_kind': 'witness'})
+                view = env.step(action)
+                history.append({'action': action, 'observation': view['observation']})
+                if view['done'] and step_index + 1 < len(task.witness_actions):
+                    raise ValueError(f'witness continues after environment termination: {task.task_id}')
+            if not view['won'] or not goal_reached(task.goal_atoms, view['facts']):
+                raise ValueError(f'witness did not complete its task: {task.task_id}')
+    if not examples:
+        raise ValueError('no witness actions are available for SFT')
     return examples
 
 
@@ -103,7 +127,7 @@ def train_sft(config, dataset_path, output_dir, parent_adapter=None, device='cud
     import torch
     from torch.utils.data import Dataset
     from transformers import Trainer, TrainingArguments, set_seed
-    from experiment_rsi.model import ModelSession
+    from .model import ModelSession
     from .snapshot import snapshot_id
 
     raw_dataset = Path(dataset_path).read_bytes()

@@ -8,9 +8,7 @@ import time
 from pathlib import Path
 from statistics import mean
 
-import experiment_rsi
-from experiment_rsi.model import seed_everything
-
+from .environment import seed_everything
 from .host import evaluate_paired, run_episode
 from .budget import Budget, BudgetExhausted, difference
 from .search import Archive, Node, Search
@@ -21,15 +19,14 @@ def policy_hash(source):
 
 
 def code_fingerprint():
-    """Identify the actual ShadowDream and Remedy Python sources used in a run."""
+    """Identify the Python sources used by this project."""
     digest = sha256()
-    for label, root in (('shadowdream', Path(__file__).parent),
-                        ('remedy', Path(experiment_rsi.__file__).parent)):
-        for path in sorted(root.rglob('*.py')):
-            name = f'{label}/{path.relative_to(root).as_posix()}'.encode()
-            digest.update(len(name).to_bytes(8, 'big'))
-            digest.update(name)
-            digest.update(path.read_bytes())
+    root = Path(__file__).parent
+    for path in sorted(root.rglob('*.py')):
+        name = f'shadowdream/{path.relative_to(root).as_posix()}'.encode()
+        digest.update(len(name).to_bytes(8, 'big'))
+        digest.update(name)
+        digest.update(path.read_bytes())
     return digest.hexdigest()
 
 

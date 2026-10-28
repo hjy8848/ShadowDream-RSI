@@ -1,5 +1,5 @@
 {
-  "alfworld": {"config_path": "../experiment-rsi/configs/alfworld_text.yaml"},
+  "alfworld": {"config_path": null},
   "worker": {"image": "python:3.11-slim", "timeout_seconds": 10, "startup_timeout_seconds": 120},
   "run": {"seed": 7, "max_steps": 30},
   "seeds": [7, 8],

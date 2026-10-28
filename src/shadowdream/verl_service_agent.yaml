@@ -1,2 +1,0 @@
-- name: shadowdream_service_replay
-  _target_: shadowdream.verl_service_agent.ServiceReplayAgentLoop

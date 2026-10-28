@@ -5,6 +5,27 @@ build-backend = "setuptools.build_meta"
 name = "shadowdream-rsi"
 version = "0.1.0"
 requires-python = ">=3.11"
+dependencies = [
+  "alfworld>=0.4.2",
+  "numpy>=1.24",
+  "peft>=0.12",
+  "PyYAML>=6.0",
+  "textworld[pddl]>=1.6.1",
+  "torch>=2.2",
+  "transformers>=4.55.2,<5.0",
+]
+
+[project.optional-dependencies]
+verl = [
+  "verl[vllm] @ git+https://github.com/HaozheZhang6/verl.git@9268aad322df93cc61e9c168d66d395256dbe87a",
+  "TransferQueue==0.1.8",
+  "cachetools",
+  "fastapi",
+  "uvicorn",
+  "pyarrow",
+  "safetensors",
+]
+
 [project.scripts]
 shadowdream = "shadowdream.cli:main"
 

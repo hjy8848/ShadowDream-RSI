@@ -1,4 +1,4 @@
-"""ALFWorld execution against Remedy's environment and isolated policy worker.
+"""ALFWorld execution against an isolated policy worker.
 
 Only observation, objective, public action history and admissible commands reach
 candidate policies. Witnesses and facts remain on the host.
@@ -7,13 +7,11 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
-from experiment_rsi.alfworld import AlfworldEpisode
-from experiment_rsi.evaluation import direct_action_messages, replace_native_objective, resolve_action, task_progress
-from experiment_rsi.model import seed_everything
-from experiment_rsi.policy import make_policy_view
-from experiment_rsi.synthesis import goal_reached
-from experiment_rsi.worker import CandidateExecutionError, PolicyWorker
-
+from .alfworld import AlfworldEpisode
+from .environment import (direct_action_messages, goal_reached, replace_native_objective,
+                          resolve_action, seed_everything, task_progress)
+from .policy import make_policy_view
+from .worker import CandidateExecutionError, PolicyWorker
 from .shadow import CheckpointOutcome, compare
 
 

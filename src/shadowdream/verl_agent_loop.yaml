@@ -1,0 +1,2 @@
+- name: shadowdream_editor_replay
+  _target_: shadowdream.verl_agent_loop.EditorReplayAgentLoop

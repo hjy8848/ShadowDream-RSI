@@ -4,7 +4,7 @@ import math
 from collections import defaultdict
 from pathlib import Path
 
-from experiment_rsi.verl_training import train_with_verl
+from .verl_training import train_with_verl
 
 
 def editor_samples(run_dir, alpha=1.0, shadow_weight=1.0, regression_weight=1.0,
@@ -86,7 +86,7 @@ def verify_behavior(session, samples, tolerance=1e-3):
 
 
 def train_editor(config, samples, output_dir, adapter_path=None):
-    from experiment_rsi.model import ModelSession
+    from .model import ModelSession
     from .snapshot import snapshot_id
     actor = ModelSession(config, adapter_path=adapter_path)
     current_snapshot = snapshot_id(actor, {'model': config['model'], 'service_adapter': adapter_path})

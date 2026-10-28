@@ -1,7 +1,7 @@
 """On-policy direct-action GRPO with the same token constraints as collection.
 
-This uses the same Transformers/PEFT actor as Remedy's model session. It does
-not use Remedy's VeRL replay path, whose unconstrained actor log-probability
+This uses the project's Transformers/PEFT actor. It does not use VeRL's default
+replay path, whose unconstrained actor log-probability
 recomputation cannot represent the legal-action trie used for collection.
 """
 from dataclasses import asdict
@@ -168,42 +168,10 @@ def update(session, groups, temperature, learning_rate, clip=0.2, tolerance=1e-3
 
 
 
-def collect_to_disk(config, tasks, output_dir, parent_adapter=None, device='cuda:0'):
-    """Collect one on-policy batch for a later mask-aware Service update."""
-    import torch
-    from experiment_rsi.model import ModelSession, seed_everything
-    from .action_model import ActionModel
-    from .snapshot import snapshot_id
-
-    output = Path(output_dir)
-    output.mkdir(parents=True, exist_ok=False)
-    seed_everything(config['run']['seed'], torch)
-    session = ActionModel(ModelSession(config, adapter_path=parent_adapter, device=device))
-    snapshot = snapshot_id(session, dict(config, service_adapter=parent_adapter))
-    limit = config['training'].get('service_env_step_budget')
-    budget = Budget(limit) if limit is not None else None
-    groups, exhausted = collect(config, session, tasks, config['seeds'], budget)
-    progress_weight = config['training'].get('service_progress_weight', 0.0)
-    invalid_penalty = config['training'].get('service_invalid_penalty', 1.0)
-    replay = masked_replay(groups, session.tokenizer, snapshot, progress_weight, invalid_penalty)
-    (output / 'masked_replay.json').write_text(json.dumps(replay, ensure_ascii=False) + '\n')
-    (output / 'rollouts.json').write_text(json.dumps(
-        [[dict(asdict(e), reward=reward_components(e, progress_weight, invalid_penalty))
-          for e in group] for group in groups], ensure_ascii=False, indent=2) + '\n')
-    metadata = {'service_snapshot': snapshot, 'model_revision': session.model_revision,
-                'adapter_version': session.adapter_version, 'seeds': config['seeds'],
-                'task_ids': [task.task_id for task in tasks], 'budget_exhausted': exhausted,
-                'budget': budget.snapshot() if budget is not None else None,
-                'temperature': config['model']['temperature'], 'top_p': config['model']['top_p']}
-    (output / 'collection.json').write_text(json.dumps(metadata, indent=2) + '\n')
-    if not groups:
-        raise ValueError('no complete Service rollout groups collected')
-    return metadata
-
-
 def train(config, tasks, output_dir, parent_adapter=None, device='cuda:0'):
     import torch
-    from experiment_rsi.model import ModelSession, seed_everything
+    from .model import ModelSession
+    from .environment import seed_everything
 
     seed_everything(config['run']['seed'], torch)
     output = Path(output_dir)

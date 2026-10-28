@@ -2,12 +2,12 @@
 import argparse
 import json
 from dataclasses import asdict
+from importlib.resources import files
 from pathlib import Path
 
-from experiment_rsi.model import ModelSession
-from experiment_rsi.policy import load_service
-from experiment_rsi.records import SyntheticTask
-
+from .model import ModelSession
+from .policy import load_service
+from .tasks import read_tasks
 from .host import evaluate_paired
 from .runner import run_search
 from .snapshot import snapshot_id
@@ -15,11 +15,20 @@ from .action_model import ActionModel
 
 
 def _json(path):
-    return json.loads(Path(path).read_text(encoding='utf-8'))
+    value = json.loads(Path(path).read_text(encoding='utf-8'))
+    alfworld = value.get('alfworld')
+    if isinstance(alfworld, dict):
+        if alfworld.get('config_path'):
+            config_path = Path(alfworld['config_path']).expanduser()
+            if not config_path.is_absolute():
+                alfworld['config_path'] = str((Path(path).resolve().parent / config_path).resolve())
+        else:
+            alfworld['config_path'] = str(files('shadowdream').joinpath('alfworld_text.yaml'))
+    return value
 
 
 def _tasks(path):
-    return [SyntheticTask(**json.loads(line)) for line in Path(path).read_text(encoding='utf-8').splitlines() if line.strip()]
+    return read_tasks(path)
 
 
 def main():
@@ -28,7 +37,7 @@ def main():
     for name in ('shadow', 'search'):
         p = sub.add_parser(name)
         p.add_argument('--config', required=True, help='JSON run configuration')
-        p.add_argument('--tasks', required=True, help='Remedy synthetic task JSONL')
+        p.add_argument('--tasks', required=True, help='ShadowDream task JSONL')
         p.add_argument('--checkpoints', required=True, help='JSON mapping task ID to prefix lengths')
         p.add_argument('--parent', required=True, help='service JSON with policy_source and knowledge')
         p.add_argument('--out', required=True)
@@ -94,10 +103,6 @@ def main():
     p.add_argument('--out', required=True)
     p.add_argument('--adapter')
     p.add_argument('--device', default='cuda:0')
-    p = sub.add_parser('service-replay')
-    p.add_argument('--config', required=True)
-    p.add_argument('--replay', required=True)
-    p.add_argument('--out', required=True)
     p = sub.add_parser('service-grpo')
     p.add_argument('--config', required=True)
     p.add_argument('--tasks', required=True)
@@ -178,15 +183,6 @@ def main():
         with path.open('x', encoding='utf-8') as stream:
             json.dump(result, stream, ensure_ascii=False, indent=2)
             stream.write('\n')
-        return
-    if args.command == 'service-replay':
-        from transformers import AutoTokenizer
-        from .service_verl_data import export_parquet
-        model = _json(args.config)['model']
-        revision = None if model['revision'] == 'local' else model['revision']
-        tokenizer = AutoTokenizer.from_pretrained(model['path'], revision=revision)
-        count = export_parquet(args.replay, args.out, tokenizer)
-        print(f'Exported {count} grouped Service trajectories; mask-aware actor required.')
         return
     if args.command == 'service-grpo':
         from .service_grpo import train

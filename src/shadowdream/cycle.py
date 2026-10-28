@@ -3,7 +3,7 @@ import copy
 import json
 from pathlib import Path
 
-from experiment_rsi.model import ModelSession
+from .model import ModelSession
 from .action_model import ActionModel
 from .editor_learning import editor_samples, train_editor
 from .runner import run_search
