@@ -43,6 +43,18 @@ def task_fingerprint(task):
 
 
 def editor_prompt(service, diagnostics):
+    """Give the Editor outcomes and compact public trajectory evidence.
+
+    Token IDs, per-token probabilities and serialized model prompts are training
+    evidence, not useful edit diagnostics; including them can overwhelm the
+    Editor context window without adding actionable information.
+    """
+    full = diagnostics.get('full', [])
+    episodes = [_editor_episode_summary(episode) for episode in full]
+    full_score = mean(float(bool(episode.get('success'))) for episode in full) if full else 0.0
+    full_progress = mean(float(episode.get('progress', 0.0)) for episode in full) if full else 0.0
+    summary = {'full': episodes, 'full_score': full_score, 'full_progress': full_progress,
+               'shadow': diagnostics.get('shadow')}
     return [
         {'role': 'system', 'content': (
             'Improve this ALFWorld Python policy. Return only complete Python source '
@@ -51,9 +63,54 @@ def editor_prompt(service, diagnostics):
             '{kind: model, messages: chat messages, state: object}. '
             'view provides objective, observation, history, admissible_commands, '
             'knowledge and remaining_steps. Only standard library is available. '
-            'Do not include markdown or change knowledge.')},
+            'Use the diagnostic outcomes to make a focused change. Preserve the '
+            'step(view, state) interface and knowledge. Do not include markdown.')},
         {'role': 'user', 'content': json.dumps({'policy_source': service['policy_source'],
-                                                'diagnostics': diagnostics}, ensure_ascii=False)}]
+                                                'diagnostics': summary}, ensure_ascii=False,
+                                               separators=(',', ':'))}]
+
+
+def _editor_episode_summary(episode):
+    trace = episode.get('trace', [])
+    if len(trace) > 8:
+        selected = list(enumerate(trace[:2])) + list(enumerate(trace[-6:], start=len(trace) - 6))
+    else:
+        selected = list(enumerate(trace))
+    steps = []
+    for index, step in selected:
+        view = step.get('view', {})
+        observation = view.get('observation', step.get('observation', ''))
+        if len(observation) > 240:
+            observation = observation[:237] + '...'
+        steps.append({'step': index, 'observation': observation, 'action': step.get('action'),
+                      'progress': step.get('progress'), 'success': step.get('success')})
+    result = {key: episode[key] for key in
+              ('task_id', 'checkpoint', 'seed', 'success', 'progress', 'prefix_steps')
+              if key in episode}
+    result['objective'] = trace[0].get('view', {}).get('objective', '') if trace else ''
+    if episode.get('candidate_error'):
+        result['candidate_error'] = episode['candidate_error'][:400]
+    result['trace'] = steps
+    result['omitted_trace_steps'] = len(trace) - len(selected)
+    if trace:
+        commands = trace[-1].get('view', {}).get('admissible_commands', [])
+        result['current_legal_actions'] = commands[:12]
+        result['omitted_legal_actions'] = max(0, len(commands) - 12)
+    return result
+
+
+def _editor_prompt_tokens(editor, messages, max_new_tokens):
+    tokenizer = getattr(editor, 'tokenizer', None)
+    model = getattr(editor, 'model', None)
+    if tokenizer is None or model is None:
+        return None
+    token_ids = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=True)
+    prompt_tokens = len(token_ids)
+    limit = getattr(getattr(model, 'config', None), 'max_position_embeddings', None)
+    if limit is not None and prompt_tokens + max_new_tokens > limit:
+        raise ValueError('Editor prompt and response budget need {} tokens, exceeding model context {}'
+                         .format(prompt_tokens + max_new_tokens, limit))
+    return prompt_tokens
 
 
 def parse_edit(text, knowledge):
@@ -69,8 +126,14 @@ def parse_edit(text, knowledge):
             raise ValueError('Editor JSON must contain only policy_source text')
         source = value['policy_source']
     tree = ast.parse(source)
-    if not any(isinstance(node, ast.FunctionDef) and node.name == 'step' for node in tree.body):
+    steps = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == 'step']
+    if len(steps) != 1:
         raise ValueError('policy must define a synchronous step function')
+    arguments = steps[0].args
+    positional = arguments.posonlyargs + arguments.args
+    if ([argument.arg for argument in positional] != ['view', 'state'] or arguments.vararg
+            or arguments.kwarg or arguments.kwonlyargs):
+        raise ValueError('step must accept exactly step(view, state)')
     return {'policy_source': source, 'knowledge': knowledge}
 
 
@@ -200,6 +263,7 @@ def run_search(config, editor, service_model, root_service, tasks, checkpoints, 
         # Environment evaluation resets global RNGs; reseed each Editor draw explicitly.
         seed_everything(rng_seed + attempt, getattr(editor, 'torch', None))
         try:
+            prompt_tokens = _editor_prompt_tokens(editor, messages, config['editor']['max_new_tokens'])
             generation = editor.generate(messages, max_new_tokens=config['editor']['max_new_tokens'],
                                          temperature=config['editor']['temperature'],
                                          top_p=config['editor']['top_p'])
@@ -213,7 +277,10 @@ def run_search(config, editor, service_model, root_service, tasks, checkpoints, 
         event = {'attempt': attempt, 'group_id': f'g{attempt // group_size:06}',
                  'parent_id': parent.id, 'prompt_messages': messages, 'generation': generation,
                  'editor_calls': 1, 'editor_tokens': (len(generation.get('prompt_ids', [])) +
-                                                      len(generation.get('generated_ids', [])))}
+                                                      len(generation.get('generated_ids', []))),
+                 'editor_prompt_tokens': prompt_tokens}
+        if budget is not None:
+            budget.charge_generation(generation, role='editor')
         try:
             service = parse_edit(generation['generated_text'], services[parent.id]['knowledge'])
         except (ValueError, SyntaxError) as error:
@@ -272,7 +339,8 @@ def run_search(config, editor, service_model, root_service, tasks, checkpoints, 
             continue
         full_score, progress_score = _metrics(full)
         node_id = f'n{attempt:06}'
-        node = Node(node_id, parent.id, full_score, shadow.gain)
+        node = Node(node_id, parent.id, full_score, shadow.gain,
+                    shadow_regression=shadow.regression)
         feedback_event = search.add_child(node)
         services[node_id], progress[node_id] = service, progress_score
         child_full = [asdict(e) for e in full]

@@ -10,6 +10,7 @@ class Node:
     shadow_gain: float = 0.0
     visits: int = 0
     feedback_sum: float = 0.0
+    shadow_regression: float = 0.0
 
 @dataclass
 class Archive:
@@ -39,10 +40,11 @@ class Search:
         if not nodes:
             raise ValueError("archive is empty")
         def score(node):
+            shadow_prior = (node.shadow_gain - node.shadow_regression
+                            if priors is None else priors[node.id])
             return ((node.feedback_sum / node.visits if node.visits else 0.0)
                     + self.c * sqrt(log(2 + self.expansions) / (1 + node.visits))
-                    + self.beta * (node.shadow_gain if priors is None else priors[node.id])
-                    / (1 + node.visits))
+                    + self.beta * shadow_prior / (1 + node.visits))
         return max(nodes, key=score)
 
     def add_child(self, child: Node) -> dict[str, float]:

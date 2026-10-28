@@ -181,6 +181,9 @@ def train(config, tasks, output_dir, parent_adapter=None, device='cuda:0'):
     session = ActionModel(ModelSession(config, adapter_path=parent_adapter, trainable=True, device=device))
     parent_config = dict(config, service_adapter=parent_adapter)
     before_snapshot = snapshot_id(session, parent_config)
+    before_weights = {name: parameter.detach().cpu().clone()
+                      for name, parameter in session.model.named_parameters()
+                      if parameter.requires_grad}
     limit = config['training'].get('service_env_step_budget')
     budget = Budget(limit) if limit is not None else None
     groups, exhausted = collect(config, session, tasks, config['seeds'], budget)
@@ -198,6 +201,12 @@ def train(config, tasks, output_dir, parent_adapter=None, device='cuda:0'):
                      progress_weight=config['training'].get('service_progress_weight', 0.0),
                      invalid_penalty=config['training'].get('service_invalid_penalty', 1.0),
                      tolerance=config['training'].get('service_logprob_tolerance', 1e-3))
+    parameter_change = sum(
+        float((parameter.detach().cpu().float() - before_weights[name].float()).abs().sum())
+        for name, parameter in session.model.named_parameters() if parameter.requires_grad
+    )
+    metrics.update({'trainable_parameter_l1_change': parameter_change,
+                    'parameter_update': parameter_change > 0.0})
     session.model.save_pretrained(output / 'adapter')
     session.tokenizer.save_pretrained(output / 'adapter')
     after_snapshot = snapshot_id(session, dict(config, service_adapter=str(output / 'adapter')))
